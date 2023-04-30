@@ -10,7 +10,7 @@ def get_last_runtime():
         # Update the last runtime of the script.
         f.seek(0)
         f.truncate()
-        f.write(str(time.time()))
+        f.write(str(time.time()-5))  # Subtract 5s to account for potential runtime differences.
 
     return last_runtime
 
@@ -92,7 +92,6 @@ def ssh_run_script(host, username, password, local_src, script_name):
     # Add a backslash before all whitespace characters so that the full path 
     # is not interpreted as multiple arguments.
     relative_path = relative_path.replace(" ", "\ ")
-    print(relative_path)
 
     # Connect to the SSH server.
     client = paramiko.SSHClient()

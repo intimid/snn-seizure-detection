@@ -12,5 +12,8 @@
                   "FZ-CZ", "CZ-PZ", 
                   "P7-T7", "T7-FT9", "FT9-FT10", "FT10-T8"]
         }
+    },
+    "tuh": {
+        "directory": "/mnt/data12_16T/public_EEG/TUH/tuh_eeg_seizure/v1.5.4/edf_resampled/train"
     }
 }

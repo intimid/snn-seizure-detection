@@ -191,24 +191,28 @@ if __name__ == "__main__":
         # Delete the EEG data to free up memory.
         del non_sz_eeg_data, non_sz_combined_data
 
-    # Group the electrode by brain lobe and plot their respective FFTs.
-    electrode_groups = {"Frontal": ["Fp1", "Fp2", "F7", "F8", "F3", "F4", "Fz"], 
-                        "Temporal": ["T3", "T4", "T5", "T6"], 
-                        "Central": ["C3", "C4", "Cz"], 
-                        "Parietal": ["P3", "P4", "Pz"], 
-                        "Occipital": ["O1", "O2"]}
-    frontal_electrodes   = ["Fp1", "Fp2", "F7", "F8", "F3", "F4", "Fz"]
-    temporal_electrodes  = ["T3", "T4", "T5", "T6"]
-    central_electrodes   = ["C3", "C4", "Cz"]
-    parietal_electrodes  = ["P3", "P4", "Pz"]
-    occipital_electrodes = ["O1", "O2"]
+    # Save the FFT dictionaries to a .npy file.
+    np.save(os.path.join(results_dir, "sz_fft.npy"), sz_fft)
+    np.save(os.path.join(results_dir, "non_sz_fft.npy"), non_sz_fft)
 
-    # Plot the FFTs of each electrode group.
-    for electrode_group, electrode_list in electrode_groups.items():
-        plot_comparison_fft(sz_fft, non_sz_fft, electrode_group, electrode_list, n, results_dir)
+    # # Group the electrode by brain lobe and plot their respective FFTs.
+    # electrode_groups = {"Frontal": ["Fp1", "Fp2", "F7", "F8", "F3", "F4", "Fz"], 
+    #                     "Temporal": ["T3", "T4", "T5", "T6"], 
+    #                     "Central": ["C3", "C4", "Cz"], 
+    #                     "Parietal": ["P3", "P4", "Pz"], 
+    #                     "Occipital": ["O1", "O2"]}
+    # frontal_electrodes   = ["Fp1", "Fp2", "F7", "F8", "F3", "F4", "Fz"]
+    # temporal_electrodes  = ["T3", "T4", "T5", "T6"]
+    # central_electrodes   = ["C3", "C4", "Cz"]
+    # parietal_electrodes  = ["P3", "P4", "Pz"]
+    # occipital_electrodes = ["O1", "O2"]
+
+    # # Plot the FFTs of each electrode group.
+    # for electrode_group, electrode_list in electrode_groups.items():
+    #     plot_comparison_fft(sz_fft, non_sz_fft, electrode_group, electrode_list, n, results_dir)
 
 
 
-    # Validate the EDA results.
-    validx = get_TUH_npy_data("validx.npy")
-    validy = get_TUH_npy_data("validy.npy")
+    # # Validate the EDA results.
+    # validx = get_TUH_npy_data("validx.npy")
+    # validy = get_TUH_npy_data("validy.npy")

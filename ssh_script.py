@@ -127,7 +127,7 @@ if __name__ == "__main__":
     remote_dest = "/home/tim/SNN Seizure Detection"
 
     # Python script to be run remotely.
-    script_name = "exploratory_data_analysis.py"
+    script_name = "slice_tuh_data.py"
 
     # Update the project files on the remote server.
     sftp_upload_project(host, username, password, local_src, remote_dest)

@@ -179,8 +179,14 @@ if __name__ == '__main__':
     data = np.load(os.path.join(foldername, filename_x))
     labels = np.load(os.path.join(foldername, filename_y))
 
-    print(data.shape)
+    idx = np.where(labels == 1)[0][0]
+    print(idx)
 
-    # Plot the histogram of the data.
-    plt.hist(data.flatten(), bins=1600)
+    fig, axs = plt.subplots(nrows=1, ncols=2, sharey=True)
+    x = data[10]
+    for channel in range(19):
+        axs[0].plot(x[:,channel])
+    x = data[idx]
+    for channel in range(19):
+        axs[1].plot(x[:,channel])
     plt.show()

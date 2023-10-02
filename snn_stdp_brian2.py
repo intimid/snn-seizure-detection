@@ -5,56 +5,116 @@ b2.prefs.codegen.target = 'numpy'  # Use the Python fallback.
                                 # On Linux machines, 'cython' may be called instead.
 import matplotlib.pyplot as plt
 
-from load_data import get_local_tuh_dev
+from load_data import get_tuh_raw
 from neural_eeg_encoder import DataEncoder
 
 
-b2.start_scope()
+from brian2 import *
 
-# Initialise parameters.
-num_samples = 1000
+start_scope()
 
-# Neuron model parameters.
-tau = 10 * b2.ms
+
+# =============================================================================
+# NEURON, SYNAPSE, AND NETWORK PARAMETERS
+# =============================================================================
+
+# Neuron model parameters:
+tau = 20 * b2.ms
 v_rest = -65. * 1e-3
 
-# Synapse model parameters.
-w_max = 1.0  # Maximum weight in the STPD layer.
+# Network parameters:
+N_CHANNELS = 19                          # Number of EEG channels.
+N_THRESHOLDS = 19                        # Number of thresholds used to encode the EEG data.
+N_INPUT = N_CHANNELS * N_THRESHOLDS * 2  # Number of input neurons.
+N_STDP = 38                              # Number of neurons in the STDP layer.
+LEARNING_RATE = 0.05
+
+# Neuron parameters:
+STDP_THRESHOLD = 14.0
+INHIBITORY_THRESHOLD = 0.9
+
+# Synapse parameters:
+w_max = 2.0  # Maximum weight of the input-STPD synapses.
+w_max_i2e = STDP_THRESHOLD  # Maximum weight of the inhibitory-STDP synapses.
 
 taupre = taupost = 20 * b2.ms
 Apre = 0.01
 Apost = -Apre * taupre / taupost * 1.05
 
-# Define neurons and synapse equations.
-# All neuron equations are identical to the LIF neuron model.
-neuron_eqs = '''
+inh_lr_plus = w_max_i2e * 0.01   # Learning rate of the inhibitory-STDP synapses to suppress similar-firing STDP neurons.
+inh_lr_minus = inh_lr_plus * -1  # Learning rate of the inhibitory-STDP synapses to minimise supression of 
+                                 # dissimilar-firing STDP neurons, thus promoting differentiation among STDP neurons.
+
+
+# =============================================================================
+# NEURON AND SYNAPSE MODEL EQUATIONS
+# =============================================================================
+
+# Excitatory STDP neurons use the LIF neuron model.
+neuron_lif_eqs = '''
 dv/dt = (v_rest - v)/tau : 1 (unless refractory)
 '''
-# neuron_eqs = '''
-# v:1
-# '''
 
+# Inhibitory STDP neurons are simple spike generators.
+neuron_spike_generator_eqs = '''
+v : 1
+'''
+
+# Excitatory STDP synapses connect the input neurons to the excitatory STDP 
+# neurons.
 # TODO: Change to event-driven for efficiency.
-synapse_eqs = '''
+synapse_stdp_eqs = '''
 w : 1
 dapre/dt  = -apre / taupre   : 1 (clock-driven)
 dapost/dt = -apost / taupost : 1 (clock-driven)
 '''
-
-synapse_pre_eqs = '''
-v_post += w
-apre += Apre
-w = clip(w+apost, 0, w_max)
+# Excitatory STDP synapse equations on pre-synaptic spikes.
+synapse_stdp_e_pre_eqs = '''
+v_post += w                  # Postsynaptic voltage increases by the weight.
+apre += Apre                 # Increase the presynaptic trace.
+w = clip(w+apost, 0, w_max)  # Increase the weight by the postsynaptic trace (clipped between 0 and w_max).
+'''
+# Excitatory STDP synapse equations on post-synaptic spikes.
+synapse_stdp_e_post_eqs = '''
+apost += Apost               # Increase the postsynaptic trace.
+w = clip(w+apre, 0, w_max)   # Increase the weight by the presynaptic trace (clipped between 0 and w_max).
 '''
 
-synapse_post_eqs = '''
-apost += Apost
-w = clip(w+apre, 0, w_max)
+# Spike-propagating synapses connect the excitatory STDP neurons to the 
+# inhibitory neurons.
+synapse_e2i_eqs = '''
+w : 1
+'''
+# Spike-propagating synapse equations on pre-synaptic spikes.
+# When a neuron j in the STDP layer fires, its corresponding inhibitory neuron 
+# i fires as well.
+synapse_e2i_pre_eqs = '''
+v_post += INHIBITORY_THRESHOLD + 0.1  # Increase the voltage of the inhibitory neuron over its threshold.
 '''
 
-# Network parameters.
-LEARNING_RATE = 0.05
-STDP_THRESHOLD = 0.1
+# Inhibitory synapse equations connect the inhibitory neurons recurrently back
+# to the excitatory STDP neurons.
+synapse_i2e_eqs = '''
+w : 1
+'''
+# Inhibitory synapse equations on pre-synaptic spikes.
+synapse_i2e_pre_eqs = '''
+lastspike_pre = t
+delta_t = lastspike_pre - lastspike_post
+is_near = (delta_t <= inh_interval / 2)
+dw = inh_lr_plus * (1 / (1 + w)) * is_near + inh_lr_minus * (1 - is_near)  # Calculate the weight change.
+w = clip(w + dw, 0, w_max_i2e)
+v_post -= w  # Postsynaptic voltage decreases by the weight.
+'''
+# Inhibitory synapse equations on post-synaptic spikes.
+synapse_i2e_post_eqs = '''
+lastspike_post = t
+delta_t = lastspike_post - lastspike_pre
+is_near = (delta_t <= inh_interval / 2)
+dw = inh_lr_plus * (1 / (1 + w)) * is_near + inh_lr_minus * (1 - is_near)  # Calculate the weight change.
+w = clip(w + dw, 0, w_max_i2e)
+'''
+
 
 # Initialise the network parameters.
 stdp_neuron_params = {
@@ -62,55 +122,44 @@ stdp_neuron_params = {
     'refractory': 1 * b2.ms
 }
 
-# connection_params = {
-#     'learning_rate': LEARNING_RATE,
-#     'w_max': w_max, 
-#     'T': 4 * b2.ms, 
-#     'isTrainable': 1
-# }
+inhibitory_neuron_params = {
+    'threshold': INHIBITORY_THRESHOLD, 
+    'refractory': 1 * b2.ms
+}
 
+i2e_synapse_params = {
+    'inh_interval': tau * 10,  # Multiplicative value adapted from Borges et al., 2017.
+}
 
-# =============================
-# CREATING NEURONS AND SYNAPSES
-# =============================
-
-# Define the input neuron as a spike generator.
-# input_neurons = b2.SpikeGeneratorGroup()
-
-
-
+    
 
 
 if __name__ == '__main__':
-    trainx, trainy = get_local_tuh_dev(file_count=5, mmap_mode='r')
-    rand_sample = np.random.randint(0, len(trainx))
-    input = trainx[rand_sample, :, :, :, 3:9]  # Shape: (23, 1, 19, 6)
-    input = torch.mean(input, dim=2).squeeze()  # Average across the channels. Shape: (23, 6)
-    input = torch.mean(input, dim=1)  # Average across the frequency bins. Shape: (23)
-    print(f"y = {int(trainy[rand_sample])}")
-    encoded_data = DataEncoder(data=input, data_range=[0,4.5], num_thresholds=44)
-    onset_times, offset_times = encoded_data.threshold_encode()
+    train_x, train_y = get_tuh_raw()
+    rand_sample = np.random.randint(0, len(train_x))
+    input = train_x[7]
+    print(f"y = {int(train_y[rand_sample])}")
 
-    input_indices = []
-    input_times = []
-    for key, value in onset_times.items():
-        if len(value) > 0:
-            for i in range(len(value)):
-                input_indices.append(int(key*2))
-                input_times.append(value[i])
-    for key, value in offset_times.items():
-        if len(value) > 0:
-            for i in range(len(value)):
-                input_indices.append(int(key*2 + 1))
-                input_times.append(value[i])
-    print(f"Input indices: {input_indices}")
-    print(f"Input times: {input_times}\n\n")
+    # Encode the data of each channel.
+    n_channels = 19
+    num_thresholds = 19
+    encoded_data = DataEncoder(data=input, data_range=[-200,200], num_thresholds=19)
+    input_indices, input_times = encoded_data.threshold_neuron_encode_multichannel(channels=n_channels, fs=250, 
+                                                                                   ignore_outliers=True, 
+                                                                                   outlier_thresholds=[-800,800])
+    print(len(input_times))
+    # print(f"Input indices: {input_indices}")
+    # print(f"Input times: {input_times}\n\n")
 
-    N_input = 88
-    input_neurons = b2.SpikeGeneratorGroup(N=N_input, indices=input_indices, times=input_times*b2.ms)
+    # =========================================================================
+    # NEURON AND SYNAPSE CREATION AND CONNECTIONS
+    # =========================================================================
+
+    N_input = n_channels * num_thresholds * 2
+    input_neurons = b2.SpikeGeneratorGroup(N=N_input, indices=input_indices, times=input_times*b2.second)
 
     # spikemon = b2.SpikeMonitor(input_neurons)
-    # b2.run(100*b2.ms)
+    # b2.run(12*b2.second)
     # plt.plot(spikemon.t/b2.ms, spikemon.i, '.k')
     # plt.xlabel('Time (ms)')
     # plt.ylabel('Neuron index')
@@ -119,65 +168,102 @@ if __name__ == '__main__':
     # print(spikemon.t)
     # print(spikemon.i)
 
-    N_stdp = 6*5
-    stdp_neurons = b2.NeuronGroup(N_stdp, model=neuron_eqs, method='exact', 
-                                  threshold='v>threshold', reset='v=0', 
+    stdp_neurons = b2.NeuronGroup(N=N_STDP, model=neuron_lif_eqs, method='exact', 
+                                  threshold='v>threshold', reset='v=0',  # TODO: Check if you need to change to reset='v-=threshold'.
                                   refractory='refractory', 
                                   namespace=stdp_neuron_params)
 
-    input2stdp_synapses = b2.Synapses(input_neurons, stdp_neurons, model=synapse_eqs, 
-                                      on_pre=synapse_pre_eqs, on_post=synapse_post_eqs, 
+    inhibitory_neurons = b2.NeuronGroup(N=N_STDP, model=neuron_spike_generator_eqs, method='exact', 
+                                        threshold='v>threshold', reset='v=0', 
+                                        refractory='refractory', 
+                                        namespace=inhibitory_neuron_params)
+
+    input2stdp_synapses = b2.Synapses(input_neurons, stdp_neurons, model=synapse_stdp_eqs,  
+                                      on_pre=synapse_stdp_e_pre_eqs, on_post=synapse_stdp_e_post_eqs, 
                                       method='exact')
     input2stdp_synapses.connect()
-    input2stdp_synapses.w = 'rand() * w_max * 0.1'
+    input2stdp_synapses.w = 'rand() * w_max * 0.5'  # Initialise synapse weights.
+
+    e2i_synapses = b2.Synapses(stdp_neurons, inhibitory_neurons, model=synapse_e2i_eqs, 
+                               on_pre=synapse_e2i_pre_eqs, method='exact')
+    e2i_synapses.connect(j='i')
+
+    i2e_synapses = b2.Synapses(inhibitory_neurons, stdp_neurons, model=synapse_i2e_eqs, 
+                               on_pre=synapse_i2e_pre_eqs, on_post=synapse_i2e_post_eqs, 
+                               method='exact', namespace=i2e_synapse_params)
+    i2e_synapses.connect(j='k for k in range(N_STDP) if k != i')
+    i2e_synapses.w = 'rand() * w_max_i2e * 0.01'  # Initialise synapse weights.
+
     w_init = np.copy(input2stdp_synapses.w)
+    w_inh_init = np.copy(i2e_synapses.w)
 
     # M = b2.StateMonitor(stdp_neurons, 'v', record=True)
-    # b2.run(25*b2.ms)
+    # I = b2.StateMonitor(inhibitory_neurons, 'v', record=True)
+    # b2.run(12*b2.second)
     # plt.plot(M.t/b2.ms, M.v[0])
+    # plt.plot(I.t/b2.ms, I.v[0])
     # plt.xlabel('Time (ms)')
     # plt.ylabel('v')
     # plt.show()
 
-    M = b2.StateMonitor(input2stdp_synapses, ['w', 'apre', 'apost'], record=True)
-
-    idx = input_indices[0]
-    print(idx)
-    print(input2stdp_synapses.w[idx*30])
-
-    b2.run(25*b2.ms)
-    plt.figure(figsize=(4, 8))
-    plt.subplot(211)
-    plt.plot(M.t/b2.ms, M.apre[idx*30], label='apre')
-    plt.plot(M.t/b2.ms, M.apost[idx*30], label='apost')
-    plt.legend()
-    plt.subplot(212)
-    plt.plot(M.t/b2.ms, M.w[idx*30], label='w')
-    plt.legend(loc='best')
+    M = b2.SpikeMonitor(stdp_neurons)
+    I = b2.SpikeMonitor(inhibitory_neurons)
+    b2.run(12*b2.second)
+    plt.plot(M.t/b2.ms, M.i, '.k')
     plt.xlabel('Time (ms)')
+    plt.ylabel('Neuron index')
     plt.show()
 
-    # spikemon = b2.SpikeMonitor(stdp_neurons)
-    # b2.run(150*b2.ms)
-    # plt.plot(spikemon.t/b2.ms, spikemon.i, '.k')
+    # M = b2.StateMonitor(input2stdp_synapses, ['w', 'apre', 'apost'], record=True)
+
+    # idx = input_indices[0]
+    # print(idx)
+    # print(input2stdp_synapses.w[idx*30])
+
+    # b2.run(1*b2.second)
+    # plt.figure(figsize=(4, 8))
+    # plt.subplot(211)
+    # plt.plot(M.t/b2.ms, M.apre[idx*30], label='apre')
+    # plt.plot(M.t/b2.ms, M.apost[idx*30], label='apost')
+    # plt.legend()
+    # plt.subplot(212)
+    # plt.plot(M.t/b2.ms, M.w[idx*30], label='w')
+    # plt.legend(loc='best')
     # plt.xlabel('Time (ms)')
-    # plt.ylabel('Neuron index')
     # plt.show()
 
     # # print(spikemon.t)
     # # print(spikemon.i)
 
-    print(w_init[idx*30])
-    print(input2stdp_synapses.w[idx*30])
+    # # Check if the weights have changed.
+    # if not np.array_equal(w_init, input2stdp_synapses.w):
+    #     print(w_init)
+    #     print(input2stdp_synapses.w)
+    #     print("Weights are not the same.")
+    #     # Print how many weights have changed.
+    #     print(len(np.where(w_init != input2stdp_synapses.w)[0]))
 
-    # Check if the weights have changed.
-    if not np.array_equal(w_init, input2stdp_synapses.w):
-        print(w_init)
-        print(input2stdp_synapses.w)
+    # Compare the initial and final weights.
+    # Weight values on the y-axis and synapse indices on the x-axis.
+    plt.plot(np.arange(len(w_init)), input2stdp_synapses.w - w_init)
+    plt.xlabel('Neuron index')
+    plt.ylabel('Weight')
+    plt.legend()
+    plt.show()
+
+    # Check if the inhibitory weights have changed.
+    if not np.array_equal(w_inh_init, i2e_synapses.w):
         print("Weights are not the same.")
-        # Print the index of the changed weights.
-        print(np.where(w_init != input2stdp_synapses.w))
+        # Print how many weights have changed out of how many.
+        print(f"{len(np.where(w_inh_init != i2e_synapses.w)[0])} / {len(w_inh_init)}")
 
+    # Compare the initial and final weights.
+    # Weight values on the y-axis and synapse indices on the x-axis.
+    plt.plot(np.arange(len(w_inh_init)), i2e_synapses.w - w_inh_init)
+    plt.xlabel('Neuron index')
+    plt.ylabel('Δw')
+    plt.legend()
+    plt.show()
 
 
 S = Synapses(poisson_input, neurons,

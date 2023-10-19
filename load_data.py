@@ -127,7 +127,7 @@ def preprocess_tuh_raw(data):
     return filtered_signal
 
 def get_tuh_raw(test=False, sz_ratio=None, mmap_mode=None):
-    foldername = "D:\\Uni\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_raw"
+    foldername = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_raw"
     if test:
         filename_x = "testx.npy"
         filename_y = "testy.npy"
@@ -147,6 +147,34 @@ def get_tuh_raw(test=False, sz_ratio=None, mmap_mode=None):
     labels = torch.from_numpy(labels).float()
 
     return data, labels
+
+
+def get_tuh_data(get_remote=True, tuh_subfolder='reshuffle', mode='train', mmap_mode=None):
+    """Fetches the TUH dataset from the remote or local TUH server.
+    """
+    if get_remote:
+        # Set the folder name of the remote TUH data.
+        foldername = '/home/tim/SNN Seizure Detection/TUH'
+        foldername = os.path.join(foldername, tuh_subfolder)
+    else: # TODO: Fix for local TUH data.
+        # Set the folder name of the local TUH data.
+        foldername = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_raw"
+
+    # Set the file names of the data and labels.
+    filename_x = f"{mode}x.npy"
+    filename_y = f"{mode}y.npy"
+
+    # Load the data and labels.
+    data = np.load(os.path.join(foldername, filename_x), mmap_mode=mmap_mode, allow_pickle=True)
+    labels = np.load(os.path.join(foldername, filename_y), mmap_mode=mmap_mode)
+
+    if tuh_subfolder == 'reshuffle':
+        # Swap the second and third axes so that the data shape becomes:
+        # (num_samples, channels, voltage)
+        data = np.swapaxes(data, 1, 2)
+
+    return data, labels
+
 
 
 
@@ -179,14 +207,18 @@ if __name__ == '__main__':
     data = np.load(os.path.join(foldername, filename_x))
     labels = np.load(os.path.join(foldername, filename_y))
 
-    idx = np.where(labels == 1)[0][0]
-    print(idx)
+    # Get the number of seizure samples.
+    sz_count = np.count_nonzero(labels[:1000])
+    print(f"Seizure count: {sz_count}")
 
-    fig, axs = plt.subplots(nrows=1, ncols=2, sharey=True)
-    x = data[10]
-    for channel in range(19):
-        axs[0].plot(x[:,channel])
-    x = data[idx]
-    for channel in range(19):
-        axs[1].plot(x[:,channel])
-    plt.show()
+    # idx = np.where(labels == 1)[0][0]
+    # print(idx)
+
+    # fig, axs = plt.subplots(nrows=1, ncols=2, sharey=True)
+    # x = data[10]
+    # for channel in range(19):
+    #     axs[0].plot(x[:,channel])
+    # x = data[idx]
+    # for channel in range(19):
+    #     axs[1].plot(x[:,channel])
+    # plt.show()

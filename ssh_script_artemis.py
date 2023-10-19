@@ -3,7 +3,6 @@ from pathlib import PurePosixPath, PureWindowsPath
 import time
 import paramiko
 
-
 def get_last_runtime():
     """Returns the last runtime of this script."""
     with open("utils\\ssh_script_last_runtime.txt", 'r+') as f:
@@ -14,7 +13,6 @@ def get_last_runtime():
         f.write(str(time.time()-5))  # Subtract 5s to account for potential runtime differences.
 
     return last_runtime
-
 
 def sftp_upload_project(host, username, password, local_src, remote_dest):
     """Uploads all updated project files to the remote server.
@@ -31,6 +29,8 @@ def sftp_upload_project(host, username, password, local_src, remote_dest):
     # Create an SFTP client.
     sftp = paramiko.SFTPClient.from_transport(transport)
 
+    print("Uploading project files...")
+
     # Upload all local project files to the remote server.
     for root, dirs, files in os.walk(local_src):
         # Ignore hidden directories (i.e. git directories).
@@ -40,7 +40,6 @@ def sftp_upload_project(host, username, password, local_src, remote_dest):
             # Get the last modified time of the file.
             last_modified = os.path.getmtime(file_path)
             if last_modified > last_runtime:
-                print(f"Uploading {file_path}...")
                 # NOTE: The remote server uses a Linux file system.
                 relative_path = PurePosixPath(PureWindowsPath(os.path.relpath(file_path, local_src)))
                 # Create the remote directory if it does not exist.
@@ -50,6 +49,7 @@ def sftp_upload_project(host, username, password, local_src, remote_dest):
                 except IOError:
                     pass
                 # Upload the file.
+                print(f"Uploading {relative_path} to {remote_dir}...")
                 remote_path = str(PurePosixPath(remote_dest, relative_path))
                 sftp.put(file_path, remote_path)
 
@@ -57,6 +57,7 @@ def sftp_upload_project(host, username, password, local_src, remote_dest):
     sftp.close()
     transport.close()
 
+    print("Project files uploaded.\n")
 
 def get_script_relative_path(local_src, script_name):
     """Returns the relative path to the script to be run remotely.
@@ -89,8 +90,7 @@ def get_script_relative_path(local_src, script_name):
 
     return relative_path
 
-
-def ssh_run_script(host, username, password, local_src, script_name, live_output=False):
+def ssh_run_script(host, username, password, local_src, script_name):
     """Runs a script on the remote server."""
     # Get the relative path to the script.
     relative_path = get_script_relative_path(local_src, script_name)
@@ -99,80 +99,44 @@ def ssh_run_script(host, username, password, local_src, script_name, live_output
     relative_path = relative_path.replace(" ", "\ ")
 
     # Connect to the SSH server.
-    print("Connecting to SSH server...")
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(host, username=username, password=password)
-    print("Connected to SSH server. Running script...")
+
+    # Connect 
 
     # Run the script.
-    command = f"python3 {relative_path}"
+    command = f"qsub {relative_path}"
+    stdin, stdout, stderr = client.exec_command(command)
 
-    if live_output:
-        # Create an interactive shell session for real-time output.
-        channel = client.invoke_shell()
-
-        # Run the script.
-        command = f"python3 {relative_path}\n"  # Add newline to execute the command
-        channel.send(command)
-        channel.send("exit\n")
-
-        # Print stdout in real-time.
-        while not channel.exit_status_ready():
-            if channel.recv_ready():
-                output = channel.recv(256).decode('utf-8')
-                print(output, end='', flush=True)
-            else:
-                time.sleep(0.1)
-        # Capture and print any remaining stdout/stderr after the loop exits.
-        print(channel.recv(1024).decode('utf-8'))
-
-        # Ensure the channel is closed.
-        if not channel.closed:
-            channel.close()
+    # Print the output.
+    if stdout.channel.recv_exit_status() == 0:
+        print(f"STDOUT: {stdout.read().decode('utf-8')}")
     else:
-        # Run the script in the background and disable output buffering for 
-        # real-time output. stdout and stderr are both redirected to nohup.out.
-        # Access real-time output with `tail -f nohup.out` otherwise use 
-        # `cat nohup.out` to view the entire output upon completion.
-        # NOTE: Excess print statements in the script can slow down script 
-        #       performance due to disabling the output buffering.
-        # NOTE: nohup.out will be overwritten each time the script is run.
-        command = f'nohup python3 -u {relative_path} &> nohup.out\n && \
-                    \necho "\n\nProgram finished running. :D" >> nohup.out &\n'
-
-        # Create an interactive shell session for nohup to work.
-        channel = client.invoke_shell()
-        # Run the script.
-        channel.send(command)
-        time.sleep(3)
-        channel.send("\nexit\n")
-
-        # Ensure the channel is closed.
-        if not channel.closed:
-            channel.close()
+        print(f"STDERR: {stderr.read().decode('utf-8')}")
 
     # Close the connection.
+    stdin.close()
+    stdout.close()
+    stderr.close()
     client.close()
-    print("SSH connection closed.")
 
 
 
 if __name__ == "__main__":
     # SSH login info.
-    host = "10.167.60.43"
-    username = "tim"
-    password = "Spider"
+    host = "hpc.sydney.edu.au"
+    username = "tlin0733"
+    password = "Omit07142k"
 
     # Upload directories.
     local_src = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection"
-    remote_dest = "/home/tim/SNN Seizure Detection"
+    remote_dest = "/project/snnseiz"
 
     # Python script to be run remotely.
-    script_name = "convert_to_npy.py"
+    script_name = "snn_stdp_brian2.py"
 
     # Update the project files on the remote server.
     sftp_upload_project(host, username, password, local_src, remote_dest)
     # Run the chosen script on the remote server.
-    live_output=False
-    ssh_run_script(host, username, password, local_src, script_name, live_output=live_output)
+    ssh_run_script(host, username, password, local_src, script_name)

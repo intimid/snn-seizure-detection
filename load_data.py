@@ -12,7 +12,7 @@ import re
 
 
 def get_local_tuh_dev(file_count=None, sz_ratio=None, mmap_mode=None):
-    foldername = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_stft_ica_devpei12s"
+    foldername = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_stft_ica_devpei12s_npy"
     data, labels = get_random_files_local_tuh_dev(foldername, file_count, mmap_mode)
     if sz_ratio != None:
         data, labels = force_seizure_ratio(data, labels, sz_ratio)

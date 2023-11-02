@@ -292,5 +292,5 @@ if __name__ == "__main__":
     # train_snn_stdp_model(model, trainloader, testloader, loss_fn, learner, optimizer, device, EPOCHS)
 
     # Save the model.
-    torch.save(model.state_dict(), "cnn_model.pth")
+    torch.save(model.state_dict(), "snn_model.pth")
     print("Saved PyTorch Model State to model.pth")

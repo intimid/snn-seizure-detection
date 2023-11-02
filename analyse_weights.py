@@ -4,11 +4,11 @@ import matplotlib.pyplot as plt
 import os
 
 # Model parameters.
-save_fq = 2
+save_fq = 50
 
 # Initialise folder and file names.
 folder = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\weights"
-subfolder = "19.10.2023_0"
+subfolder = "02.11.2023_0"
 foldername = os.path.join(folder, subfolder)
 
 filename_w_stdp = "w_stdp.npy"
@@ -17,7 +17,7 @@ filename_w_rstdp = "w_rstdp.npy"
 filename_w_stdp_final = "w_stdp_final.npy"
 filename_w_inh_final = "w_inh_final.npy"
 filename_w_rstdp_final = "w_rstdp_final.npy"
-filename_hit_miss_rate = "hit_miss_rate.npy"
+filename_hit_miss_rate = "hit_miss_rate_train.npy"
 
 # Load the weights.
 w_stdp = np.load(os.path.join(foldername, filename_w_stdp))
@@ -77,8 +77,8 @@ plt.tight_layout()
 # Plot the hit and miss rates over each epoch.
 hit_miss_rate = np.load(os.path.join(foldername, filename_hit_miss_rate))
 plt.figure()
-plt.plot(np.arange(len(hit_miss_rate[0])), hit_miss_rate[0])
-plt.plot(np.arange(len(hit_miss_rate[1])), hit_miss_rate[1])
+plt.plot(np.arange(len(hit_miss_rate[:,0])), hit_miss_rate[:,0])
+plt.plot(np.arange(len(hit_miss_rate[:,1])), hit_miss_rate[:,1])
 plt.title("Hit and miss rates")
 plt.xlabel("Epoch")
 plt.ylabel("Rate")

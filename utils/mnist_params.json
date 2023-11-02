@@ -1,0 +1,85 @@
+{
+    "network_params": {
+        "n_input": 784,
+        "n_stdp": 100,
+        "n_output": 2
+    },
+
+    "neuron_stdp_comment": [
+        "refractory should be 10% of tau",
+        "tau_theta should be equal to tau"
+    ],
+    "neuron_stdp_params": {
+        "threshold": 5.0,
+        "refractory": 999,
+        "v_rest": -0.065,
+        "tau": 100,
+        "tau_theta": 999
+    },
+
+    "neuron_inh_comment": [
+        "tau is not needed but is included for consistency"
+    ],
+    "neuron_inh_params": {
+        "threshold": 0.9,
+        "refractory": 20,
+        "tau": 100
+    }, 
+
+    "neuron_rstdp_params": {
+        "threshold": 2.0,
+        "refractory": 100,
+        "tau": 100
+    },
+
+    "synapse_stdp_comment": [
+        "threshold should be equal to neuron_stdp's threshold",
+        "tau_pre and tau_post should be equal",
+        "Apost should equal -Apre * taupre / taupost * 1.05",
+        "ltd_factor_max should be 20% of neuron_inh's tau"
+    ],
+    "synapse_stdp_params": {
+        "threshold": 999,
+        "w_max": 1.0,
+        "taupre": 20,
+        "taupost": 20,
+        "Apre": 0.05,
+        "Apost": 999,
+        "ltd_factor_max": 999,
+        "lr": 1,
+        "theta_mult": 0.1
+    },
+
+    "synapse_i2e_comment": [
+        "w_max should be 80% of neuron_stdp's threshold",
+        "inh_interval should be 10x that of neuron_stdp's tau??? or based on sample_length???",
+        "inh_lr_plus should be 0.002x that of synapse_i2e's w_max",
+        "inh_lr_minus should be the negative of inh_lr_plus"
+    ],
+    "synapse_i2e_params": {
+        "w_max": 999,
+        "inh_interval": 999,
+        "inh_lr_plus": 999,
+        "inh_lr_minus": 999,
+        "lr": 1
+    },
+
+    "synapse_rstdp_comment": [
+        "contribution_interval should be equal to neuron_rstdp's tau"
+    ],
+    "synapse_rstdp_params": {
+        "w_max": 2.0,
+        "contribution_interval": 999,
+        "a_r+": 0.02,
+        "a_r-": -0.04,
+        "a_p-": -0.05,
+        "a_p+": 0.01,
+        "lr": 1
+    },
+
+    "setting_up_comment": [
+        "999 values are placeholders",
+        "tau values need to be multiplied by b2.ms", 
+        "refractory values need to be multiplied by b2.ms"
+    ]
+}

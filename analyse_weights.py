@@ -8,7 +8,7 @@ save_fq = 50
 
 # Initialise folder and file names.
 folder = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\weights"
-subfolder = "02.11.2023_0"
+subfolder = "02.11.2023_3"
 foldername = os.path.join(folder, subfolder)
 
 filename_w_stdp = "w_stdp.npy"

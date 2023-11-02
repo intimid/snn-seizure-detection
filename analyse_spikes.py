@@ -58,7 +58,7 @@ def get_data(mode, tuh_subfolder='threshold_encoded', remote_deploy=False):
 
 # Initialise folder and file names.
 folder = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\weights"
-subfolder = "02.11.2023_0"
+subfolder = "02.11.2023_3"
 foldername = os.path.join(folder, subfolder)
 filename_stdp_spikes = "stdp_test_spikes.npy"
 filename_rstdp_spikes = "rstdp_test_spikes.npy"

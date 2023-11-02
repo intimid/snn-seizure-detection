@@ -14,6 +14,7 @@
         "refractory": 999,
         "v_rest": -0.065,
         "tau": 100,
+        "theta_mult": 0.2,
         "tau_theta": 999
     },
 
@@ -46,19 +47,22 @@
         "Apre": 0.05,
         "Apost": 999,
         "ltd_factor_max": 999,
-        "lr": 1,
-        "theta_mult": 0.1
+        "lr": 1
     },
 
     "synapse_i2e_comment": [
         "w_max should be 80% of neuron_stdp's threshold",
+        "tau_near should be half of neuron_stdp's tau",
+        "tau_far should be twice that of neuron_stdp's tau",
         "inh_interval should be 10x that of neuron_stdp's tau??? or based on sample_length???",
         "inh_lr_plus should be 0.002x that of synapse_i2e's w_max",
-        "inh_lr_minus should be the negative of inh_lr_plus"
+        "inh_lr_minus should be the negative of 0.2x that of inh_lr_plus"
     ],
     "synapse_i2e_params": {
         "w_max": 999,
         "inh_interval": 999,
+        "tau_near": 999,
+        "tau_far": 999,
         "inh_lr_plus": 999,
         "inh_lr_minus": 999,
         "lr": 1

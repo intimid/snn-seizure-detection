@@ -20,7 +20,7 @@ snn_net.update_network_weights(
     snn_net.config['synapse_i2e_params']['w_max'], 
     snn_net.config['synapse_rstdp_params']['w_max']
 )
-snn_net.update_input_neurons(spike_indices, spike_times, 0, 1, 0)
+snn_net.update_input_neurons(spike_indices, spike_times)
 snn_net.input2stdp_synapses.is_active = 1
 snn_net.i2e_synapses.is_active = 1
 snn_net.rstdp_synapses.is_active = 1
@@ -84,7 +84,7 @@ snn_net.update_network_weights(
     snn_net.config['synapse_i2e_params']['w_max'], 
     snn_net.config['synapse_rstdp_params']['w_max']
 )
-snn_net.update_input_neurons(spike_indices, spike_times, 0, 1, 0)
+snn_net.update_input_neurons(spike_indices, spike_times)
 snn_net.input2stdp_synapses.is_active = 1
 snn_net.i2e_synapses.is_active = 1
 snn_net.rstdp_synapses.is_active = 1
@@ -149,7 +149,7 @@ snn_net.update_network_weights(
     snn_net.config['synapse_i2e_params']['w_max'], 
     snn_net.config['synapse_rstdp_params']['w_max']
 )
-snn_net.update_input_neurons(spike_indices, spike_times, 0, 1, 0)
+snn_net.update_input_neurons(spike_indices, spike_times)
 snn_net.input2stdp_synapses.is_active = 1
 snn_net.i2e_synapses.is_active = 1
 snn_net.rstdp_synapses.is_active = 1

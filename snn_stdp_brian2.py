@@ -15,11 +15,6 @@ import shutil
 import idx2numpy
 import time
 
-from load_data import get_tuh_raw
-from neural_eeg_encoder import DataEncoder
-
-import matplotlib.pyplot as plt
-
 
 
 # =============================================================================
@@ -27,50 +22,22 @@ import matplotlib.pyplot as plt
 # =============================================================================
 
 # Model parameters:
-EPOCHS = 2
+EPOCHS = 5
 
-LR_INIT = 1
-LR_FINAL = 0.0
+LR_INIT = 0.5
+LR_FINAL = 0.2
 DECAY_RATE = 0.05
 
 # Input parameters:
 fs = 250                   # Sampling rate.
-sample_length = 0.35  # 12 seconds of data for each sample.
+sample_length = 3000 / fs  # 12 seconds of data for each sample.
 n_channels = 19            # Number of EEG channels.
 n_thresholds = 19          # Number of thresholds used to encode the EEG data.
 
-# # Network parameters:
-# N_INPUT = n_channels * n_thresholds * 2  # Number of input neurons.
-# N_STDP = 38                              # Number of neurons in the STDP layer.
-
-# # Neuron parameters:
-# STDP_THRESHOLD = 10.0
-# INHIBITORY_THRESHOLD = 0.9
-# RSTDP_THRESHOLD = 4.0
-# tau = 100 * b2.ms  # NOTE: Biological value is 20 ms. 100 ms allows for integration over more spikes.
-# r_tau = 100 * b2.ms  # Time constant for R-STDP neurons.
-# v_rest = -65. * 1e-3
-
-# # Synapse parameters:
-# w_max = 1.0  # Maximum weight of the input-STPD synapses.
-# w_max_i2e = STDP_THRESHOLD * 0.8  # Maximum weight of the inhibitory-STDP synapses.
-# w_max_rstdp = 2.0  # Maximum weight of the STDP-R-STDP synapses.
-
-# taupre = taupost = 20 * b2.ms
-# Apre = 0.05
-# Apost = -Apre * taupre / taupost * 1.05
-
-# ltd_factor_max = STDP_THRESHOLD * 0.2  # Scaling factor for the LTD rule in the STDP synapses (adapted from Amirshahi & Hashemi, 2019).
-
-# inh_lr_plus = w_max_i2e * 0.002  # Learning rate of the inhibitory-STDP synapses to suppress similar-firing STDP neurons.
-# inh_lr_minus = inh_lr_plus * -1  # Learning rate of the inhibitory-STDP synapses to minimise supression of
-#                                  # dissimilar-firing STDP neurons, thus promoting differentiation among STDP neurons.
-
-# rstdp_contribution_interval = 100 * b2.ms  # Time interval for which STDP neurons are considered to have contributed to the
-#                                      # R-STDP neuron spike result.
-
 # Other parameters:
-save_fq = 50  # Save the model every `save_fq` samples in each epoch.
+save_rate = 4  # Number of times to save the model weights within each epoch.
+               # This does NOT include the initial save at the start of each epoch, 
+               # nor the final save at the end of each epoch.
 
 
 class SNNModel:
@@ -87,7 +54,17 @@ class SNNModel:
                                    Defaults to [0.85, 0.7, 1].
 
     Attributes:
-
+        config (dict): Dictionary containing the network's configuration parameters.
+        is_training (bool): Whether the model is being used for training.
+        dropouts (list): List of dropout probabilities for the input, inhibitory, and R-STDP synapses.
+        input_neurons (brian2.SpikeGeneratorGroup): Spike generator group for the input neurons.
+        stdp_neurons (brian2.NeuronGroup): Excitatory STDP neurons.
+        inhibitory_neurons (brian2.NeuronGroup): Inhibitory neurons.
+        rstdp_neurons (brian2.NeuronGroup): R-STDP neurons.
+        input2stdp_synapses (brian2.Synapses): Synapses connecting the input neurons to the excitatory STDP neurons.
+        e2i_synapses (brian2.Synapses): Synapses connecting the excitatory STDP neurons to the inhibitory neurons.
+        i2e_synapses (brian2.Synapses): Synapses connecting the inhibitory neurons to the excitatory STDP neurons.
+        rstdp_synapses (brian2.Synapses): Synapses connecting the excitatory STDP neurons to the R-STDP neurons.
     """
 
 
@@ -121,21 +98,21 @@ class SNNModel:
     # Excitatory STDP synapses connect the input neurons to the excitatory STDP neurons.
     synapse_stdp_eqs = '''
     w : 1
-    dapre/dt  = -apre / taupre   : 1 (clock-driven)  # TODO: Change back to event-driven.
-    dapost/dt = -apost / taupost : 1 (clock-driven)
+    dapre/dt  = -apre / taupre   : 1 (event-driven)
+    dapost/dt = -apost / taupost : 1 (event-driven)
     is_active : 1
     '''
     # Excitatory STDP synapse equations on pre-synaptic spikes.
     synapse_stdp_e_pre_eqs = '''
     v_post += w * is_active  # Postsynaptic voltage increases by the weight.
     apre += Apre             # Increase the presynaptic trace.
-    ltd_factor = (1 + w * ltd_factor_max) / (1 + w)                # Calculate the LTD factor.
-    w = clip(w + (apost * ltd_factor * lr * is_active), 0, w_max)  # Increase the weight by the scaled postsynaptic trace (clipped between 0 and w_max).
+    ltd_factor = (1 + w * ltd_factor_max) / (1 + w)
+    w = clip(w + (apost * ltd_factor * lr * is_active), 0, w_max)
     '''
     # Excitatory STDP synapse equations on post-synaptic spikes.
     synapse_stdp_e_post_eqs = '''
     apost += Apost           # Increase the postsynaptic trace.
-    w = clip(w + (apre * lr * is_active), 0, w_max)   # Increase the weight by the presynaptic trace (clipped between 0 and w_max).
+    w = clip(w + (apre * lr * is_active), 0, w_max)
     '''
 
     # Spike-propagating synapses connect the excitatory STDP neurons to the inhibitory neurons.
@@ -160,7 +137,7 @@ class SNNModel:
     is_near = (delta_t <= inh_interval / 2)
     dw = inh_lr_plus * exp(-delta_t / tau_near) * (1 / (1 + w)) * is_near + inh_lr_minus * exp(-delta_t / tau_far) * (1 - is_near)
     w = clip(w + (dw * lr * is_active), 0, w_max)
-    v_post = 0  # Postsynaptic voltage decreases by the weight.
+    v_post -= w * is_active  # Postsynaptic voltage decreases by the weight.
     '''
     # Inhibitory synapse equations on post-synaptic spikes.
     synapse_i2e_post_eqs = '''
@@ -292,9 +269,12 @@ class SNNModel:
         self.input_neurons = b2.SpikeGeneratorGroup(N=n_input, indices=[], times=[] * b2.second)
         self.stdp_neurons = b2.NeuronGroup(N=n_stdp, model=self.neuron_lif_homeostasis_eqs, method='exact',
                                            threshold='v > (threshold+theta)', reset='v = 0', 
-                                           events={'on_spike': 'v > (threshold+theta)'},
+                                           events={'on_spike': 'v > (threshold+theta)',
+                                                   'v_neg': 'v < -0.065'},
                                            refractory='refractory', namespace=self.config['neuron_stdp_params'])
         self.stdp_neurons.run_on_event('on_spike', 'theta += threshold * theta_mult')
+        self.stdp_neurons.run_on_event('v_neg', 'v = 0')  # HACK: Directly clipping the voltage above 0 inside the 
+                                                          #       i2e synapse equations breaks Brian 2.
         self.rstdp_neurons = b2.NeuronGroup(N=n_rstdp, model=self.neuron_simplified_lif_eqs, method='exact',
                                             threshold='v > threshold', reset='v = 0',
                                             refractory='refractory', namespace=self.config['neuron_rstdp_params'])
@@ -306,7 +286,8 @@ class SNNModel:
                                                              apre += Apre''',
                                                    on_post='apost += Apost', method='exact',
                                                    namespace=self.config['synapse_stdp_params'])
-            self.input2stdp_synapses.connect()  # Connect all input neurons to all excitatory neurons in a 1-to-all fashion.
+            self.input2stdp_synapses.connect()  # Connect all input neurons to all excitatory neurons
+                                                # in a 1-to-all fashion.
 
             self.rstdp_synapses = b2.Synapses(self.stdp_neurons, self.rstdp_neurons, model=self.synapse_rstdp_eqs,
                                               on_pre=self.synapse_rstdp_pre_eqs, method='exact',
@@ -336,7 +317,8 @@ class SNNModel:
         self.i2e_synapses = b2.Synapses(self.inhibitory_neurons, self.stdp_neurons, model=self.synapse_i2e_eqs,
                                         on_pre=self.synapse_i2e_pre_eqs, on_post=self.synapse_i2e_post_eqs,
                                         method='exact', namespace=self.config['synapse_i2e_params'])
-        self.i2e_synapses.connect(j='k for k in range(n_stdp) if k != i')  # Connect inhibitory neurons to all excitatory
+        self.i2e_synapses.connect(j='k for k in range(n_stdp) if k != i')  # Connect inhibitory neurons to 
+                                                                           # all excitatory neurons.
 
         self.rstdp_synapses = b2.Synapses(self.stdp_neurons, self.rstdp_neurons, model=self.synapse_rstdp_eqs,
                                             on_pre=self.synapse_rstdp_pre_eqs, method='exact',
@@ -392,8 +374,8 @@ class SNNModel:
             # Multiply by a quarter of the maximum weight and offset by 
             # 10% of the maximum weight.
             input_means[class_idx] = input_means[class_idx] * \
-                self.config['synapse_stdp_params']['w_max'] * 0.25 + \
-                self.config['synapse_stdp_params']['w_max'] * 0.05
+                self.config['synapse_stdp_params']['w_max'] * 0.20 + \
+                self.config['synapse_stdp_params']['w_max'] * 0.03
 
         # Step through each STDP neuron, allocate it a class, and assign the 
         # corresponding weight values for its connecting synapses.
@@ -402,8 +384,8 @@ class SNNModel:
             # Assign a class to the STDP neuron.
             stdp_neuron_class = stdp_neuron % n_classes
             # Assign the weights to the synapses. Add noise to the weights for variation between neurons.
-            rand_low = self.config['synapse_stdp_params']['w_max'] * -0.03
-            rand_high = self.config['synapse_stdp_params']['w_max'] * 0.03
+            rand_low = self.config['synapse_stdp_params']['w_max'] * -0.015
+            rand_high = self.config['synapse_stdp_params']['w_max'] * 0.015
             input2stdp_w[stdp_neuron::self.config['network_params']['n_stdp']] = \
                 input_means[stdp_neuron_class] + \
                 np.random.uniform(rand_low, rand_high, size=self.config['network_params']['n_input'])
@@ -442,8 +424,8 @@ class SNNModel:
                                                 scale=self.config['synapse_stdp_params']['w_max'] * 0.25,
                                                 size=self.config['network_params']['n_input'] * \
                                                     self.config['network_params']['n_stdp']))
-            i2e_w = abs(np.random.normal(loc=self.config['synapse_i2e_params']['w_max'] * 0.4,
-                                         scale=self.config['synapse_i2e_params']['w_max'] * 0.2,
+            i2e_w = abs(np.random.normal(loc=self.config['synapse_i2e_params']['w_max'] * 0.15,
+                                         scale=self.config['synapse_i2e_params']['w_max'] * 0.05,
                                          size=self.config['network_params']['n_stdp'] * \
                                             (self.config['network_params']['n_stdp']-1)))
             rstdp_w = abs(np.random.normal(loc=self.config['synapse_rstdp_params']['w_max'] * 0.5,
@@ -452,8 +434,8 @@ class SNNModel:
                                             self.config['network_params']['n_output']))
         elif init_mode == 'sample_based':
             input2stdp_w = self.generate_sample_based_weights(sample_data_x, sample_data_y)
-            i2e_w = abs(np.random.normal(loc=self.config['synapse_i2e_params']['w_max'] * 0.4,
-                                         scale=self.config['synapse_i2e_params']['w_max'] * 0.2,
+            i2e_w = abs(np.random.normal(loc=self.config['synapse_i2e_params']['w_max'] * 0.15,
+                                         scale=self.config['synapse_i2e_params']['w_max'] * 0.05,
                                          size=self.config['network_params']['n_stdp'] * \
                                             (self.config['network_params']['n_stdp']-1)))
             rstdp_w = abs(np.random.normal(loc=self.config['synapse_rstdp_params']['w_max'] * 0.5,
@@ -555,7 +537,8 @@ class SNNModel:
 
         # Add a pseudo-spike to the start of the R-STDP neuron spike train for
         # contribution calculations.
-        rstdp_winner_times = np.insert(rstdp_winner_times, 0, sample_length * sample_no * b2.second - contribution_interval)
+        rstdp_winner_times = np.insert(
+            rstdp_winner_times, 0, sample_length * sample_no * b2.second - contribution_interval)
 
         delta_w = np.empty(n_stdp)
         # Calculate the average contribution of each STDP neuron to the R-STDP
@@ -761,10 +744,10 @@ def return_program_args(data_type, is_training, remote_deploy):
     match data_type:
         case 'thr_encoded':
             data_subfolder = 'threshold_encoded'
-            config_filename = 'dataset_configs.json'
+            config_filename = 'network_params.json'
         case 'stft':
             data_subfolder = 'tuh_stft_ica_devpei12s_npy'
-            config_filename = 'dataset_configs.json'
+            config_filename = 'network_params.json'
         case 'mnist':
             data_subfolder = 'mnist'
             config_filename = 'mnist_params.json'
@@ -858,7 +841,7 @@ def save_model_params(subfolder):
         f.write(f"Learning Rate (Initial): {LR_INIT}\n")
         f.write(f"Learning Rate (Final): {LR_FINAL}\n")
         f.write(f"Learning Rate Decay Rate: {DECAY_RATE}\n")
-        f.write(f"Save Frequency: {save_fq}\n")
+        f.write(f"Save Rate: {save_rate}\n")
         f.write(f"Data Type: {data_type}\n")
         f.write(f"Number of Samples: {n_sample}\n")
         f.write(f"Sample Length: {sample_length}\n")
@@ -867,7 +850,7 @@ def save_model_params(subfolder):
     shutil.copyfile(os.path.join('utils', config_filename), os.path.join(subfolder, config_filename))
 
 
-def record_weights(net, epoch_no=None, sample_no=None, init=False, epochs=None, n_sample=None, save_fq=100):
+def record_weights(net, epoch_no=None, sample_no=None, init=False, epochs=None, n_sample=None, save_rate=9):
     """Record the weights of the network.
     """
     global w_stdp, w_inh, w_rstdp
@@ -878,21 +861,18 @@ def record_weights(net, epoch_no=None, sample_no=None, init=False, epochs=None, 
     n_rstdp = net.config['network_params']['n_output']
 
     if init:
-        # Calculate the number of times weights are saved per epoch.
-        # This includes the first set of weights before the epoch starts.
-        saves_per_epoch = n_sample // save_fq + 1
         # Initialise the weights.
-        w_stdp = np.empty((epochs, saves_per_epoch, n_input*n_stdp))
-        w_inh = np.empty((epochs, saves_per_epoch, n_stdp*(n_stdp-1)))
-        w_rstdp = np.empty((epochs, saves_per_epoch, n_stdp*n_rstdp))
+        w_stdp = np.empty((epochs, save_rate + 2, n_input*n_stdp))
+        w_inh = np.empty((epochs, save_rate + 2, n_stdp*(n_stdp-1)))
+        w_rstdp = np.empty((epochs, save_rate + 2, n_stdp*n_rstdp))
 
         # Return the initialised weights to enter them into the global scope.
         return w_stdp, w_inh, w_rstdp
 
-    save_no = sample_no // save_fq
-    w_stdp[epoch_no, save_no] = np.copy(net.input2stdp_synapses.w)
-    w_inh[epoch_no, save_no] = np.copy(net.i2e_synapses.w)
-    w_rstdp[epoch_no, save_no] = np.copy(net.rstdp_synapses.w)
+    save_no = int(sample_no // (n_sample / (save_rate + 1)))
+    w_stdp[epoch_no, save_no, :] = np.copy(net.input2stdp_synapses.w)
+    w_inh[epoch_no, save_no, :] = np.copy(net.i2e_synapses.w)
+    w_rstdp[epoch_no, save_no, :] = np.copy(net.rstdp_synapses.w)
 
 
 def save_weights(w_stdp, w_inh, w_rstdp, w_stdp_final, w_inh_final, w_rstdp_final):
@@ -952,18 +932,16 @@ def print_sample_results(is_training, sample, n_sample, input_spikes_cnt, stdp_s
 # =============================================================================
 
 if __name__ == '__main__':
-    data_type = 'mnist'  # 'raw' or 'stft'
+    data_type = 'thr_encoded'  # 'raw' or 'stft'
     is_training = True
     remote_deploy = False
     if not is_training:
-        weight_foldername ='02.11.2023_3'
+        weight_foldername ='08.11.2023_2'
     else:
         weight_foldername = ''
 
     data_subfolder, mode, config_filename = return_program_args(data_type, is_training, remote_deploy)
     data_x, data_y = get_data(mode=mode, tuh_subfolder=data_subfolder, remote_deploy=remote_deploy)
-    data_x = data_x[:1000]  # TODO: Remove me after prelim testing.
-    data_y = data_y[:1000]  # TODO: Remove me after prelim testing.
 
     if data_type == 'mnist':
         # Get only the samples with labels 0 and 1.
@@ -972,42 +950,31 @@ if __name__ == '__main__':
 
     og_seiz_ratio = np.count_nonzero(data_y) / len(data_y)
 
-    # if is_training:
-    #     if data_type == 'stft':
-    #         data_shape = data_x.shape
-    #         # Flatten the data for sampling.
-    #         data_x = data_x.reshape(data_shape[0], -1)
-    #     elif data_type == 'mnist':
-    #         data_shape = data_x.shape
-    #         # Flatten the data for sampling.
-    #         data_x = data_x.reshape(data_shape[0], -1)
-    #     # Balance the data.
-    #     undersample_rate = 0.25
-    #     data_x, data_y = balance_data(data_x, data_y, undersample_ratio=undersample_rate, oversampler='adasyn',
-    #                                   oversample_strategy='minority', shuffle=False)
-    #     if data_type == 'stft':
-    #         # Reshape the data for training.
-    #         data_x = data_x.reshape(-1, data_shape[1], data_shape[2], data_shape[3])
-    #     elif data_type == 'mnist':
-    #         # Reshape the data for training.
-    #         data_x = data_x.reshape(-1, data_shape[1], data_shape[2])
+    if is_training:
+        if data_type == 'stft':
+            data_shape = data_x.shape
+            # Flatten the data for sampling.
+            data_x = data_x.reshape(data_shape[0], -1)
+        elif data_type == 'mnist':
+            data_shape = data_x.shape
+            # Flatten the data for sampling.
+            data_x = data_x.reshape(data_shape[0], -1)
+        # Balance the data.
+        undersample_rate = 0.25
+        data_x, data_y = balance_data(data_x, data_y, undersample_ratio=undersample_rate, oversampler='random',
+                                      oversample_strategy='minority', shuffle=True)
+        if data_type == 'stft':
+            # Reshape the data for training.
+            data_x = data_x.reshape(-1, data_shape[1], data_shape[2], data_shape[3])
+        elif data_type == 'mnist':
+            # Reshape the data for training.
+            data_x = data_x.reshape(-1, data_shape[1], data_shape[2])
 
     print(f"Number of samples: {len(data_x)}.   Seizure ratio: {np.count_nonzero(data_y) / len(data_y)}" + \
           f" (increased from {og_seiz_ratio})")
 
     # NOTE: stft
-    if data_type == 'stft':
-        # Take only the first channel (FP1) of the data.
-        data_x = data_x[:,0,:,:]
-        # # Flatten the last two dimensions.
-        # data_x = data_x.reshape(data_x.shape[0], -1)
-        # Clip the data to the range [0, 1].
-        data_x = np.clip(data_x, 0, 1)
-        # Scale the data to the range [0, 50].
-        data_x = data_x * 50
-        # Get the input data.
-        data_x = generate_poisson_spikes(data_x, 0.15)
-    elif data_type == 'mnist':
+    if data_type == 'mnist':
         # Flatten the last two dimensions.
         data_x = data_x.reshape(data_x.shape[0], -1)
         # Divide the values by 4.
@@ -1016,53 +983,54 @@ if __name__ == '__main__':
         data_x = np.expand_dims(data_x, axis=2)
         # Get the input data.
         data_x = generate_poisson_spikes(data_x, 0.35)
-
+    elif data_type == 'stft':
+        # Take only the first channel (FP1) of the data.
+        data_x = data_x[:,0,:,:]
+        # Clip the data to the range [0, 1].
+        data_x = np.clip(data_x, 0, 1)
+        # Scale the data to the range [0, 50].
+        data_x = data_x * 50
+        # Get the input data.
+        data_x = generate_poisson_spikes(data_x, 0.15)
+    elif data_type == 'thr_encoded':
+        # Convert the data to a structured Numpy array with the same 
+        # characteristics as the Poisson spike data.
+        spike_data = np.zeros((len(data_x),), dtype=[('indices', 'O'), ('times', 'O')])
+        for i in range(len(data_x)):
+            spike_data['indices'][i] = data_x[i][0]
+            spike_data['times'][i] = data_x[i][1]
+        del i  # Interferes with Brian 2 operations.
+        data_x = spike_data
 
     b2.start_scope()
 
     # Initialise the network and weights.
+    configs = json.load(open(os.path.join('utils', config_filename)))
+    n_stdp = configs['network_params']['n_stdp']
     snn_net = SNNModel(config_filename, is_training, weight_foldername, 
-                       init_mode='sample_based', init_data_x=data_x[:100], init_data_y=data_y[:100], 
+                       init_mode='sample_based', init_data_x=data_x[:n_stdp], init_data_y=data_y[:n_stdp], 
                        dropouts=[0.6,0.7,0.8])
     if not is_training:
-        stdp_spikemon_all = b2.SpikeMonitor(snn_net.stdp_neurons)
-        snn_net.net.add(stdp_spikemon_all)
-        rstdp_spikemon_all = b2.SpikeMonitor(snn_net.rstdp_neurons)
-        snn_net.net.add(rstdp_spikemon_all)
+        stdp_spikes = []
+        rstdp_spikes = []
         EPOCHS = 1
-
-
-
-
-    # # Initialise the network and weights and save the network state.
-    # if is_training:
-    #     (input_neurons, stdp_neurons, inhibitory_neurons, rstdp_neurons,
-    #      input2stdp_synapses, e2i_synapses, i2e_synapses, rstdp_synapses,
-    #      net) = create_network(is_training=is_training)
-    #     update_network_weights(init=True)
-    # else:
-    #     (input_neurons, stdp_neurons, rstdp_neurons,
-    #      input2stdp_synapses, rstdp_synapses,
-    #      net) = create_network(is_training=is_training)
-    #     subfoldername = '19.10.2023_0'
-    #     load_train_weights(subfoldername, is_training=is_training)
-    #     stdp_spikemon = b2.SpikeMonitor(stdp_neurons)
-    #     rstdp_spikemon = b2.SpikeMonitor(rstdp_neurons)
-    #     EPOCHS = 1
 
     n_sample = len(data_x)
     if is_training:
         # Save the network weights.
-        w_stdp, w_inh, w_rstdp = record_weights(net=snn_net, init=True, epochs=EPOCHS, n_sample=n_sample, save_fq=save_fq)
+        w_stdp, w_inh, w_rstdp = record_weights(net=snn_net, init=True, epochs=EPOCHS, 
+                                                n_sample=n_sample, save_rate=save_rate)
 
     hit_factor = 1
     miss_factor = 1
     hit_miss_rate = np.empty((EPOCHS, 2))
+    save_fq = n_sample / (save_rate + 1)
+    save_idxs = np.ceil([i * save_fq for i in range(save_rate + 2)]).astype(int)
     for epoch in range(EPOCHS):
         print(f"\n===== EPOCH {epoch+1} / {EPOCHS} =====")
         if is_training:
             # Save the initial weights for the current epoch.
-            record_weights(snn_net, epoch, sample_no=0, save_fq=save_fq)
+            record_weights(snn_net, epoch, 0, n_sample=n_sample, save_rate=save_rate)
 
             # Shuffle the training data.
             shuffled_idxs = np.arange(n_sample)
@@ -1076,7 +1044,8 @@ if __name__ == '__main__':
             # Calculate the learning rate for the current epoch.
             snn_net.config['synapse_stdp_params']['lr'], \
                 snn_net.config['synapse_i2e_params']['lr'], \
-                snn_net.config['synapse_rstdp_params']['lr'] = learning_rate_schedule(epoch, LR_INIT, LR_FINAL, DECAY_RATE)
+                snn_net.config['synapse_rstdp_params']['lr'] = \
+                    learning_rate_schedule(epoch, LR_INIT, LR_FINAL, DECAY_RATE)
 
         snn_net.net.store()
 
@@ -1097,22 +1066,7 @@ if __name__ == '__main__':
             # Run the network and save its final state if training the network.
             # NOTE: b2.run() is initialised for every simulation run since
             #       network_operation() is incompatible with net.restore().
-            v = b2.StateMonitor(snn_net.stdp_neurons, 'v', record=46)
-            snn_net.net.add(v)
-            theta_statemon = b2.StateMonitor(snn_net.stdp_neurons, 'theta', record=46)
-            snn_net.net.add(theta_statemon)
             snn_net.net.run(sample_length * b2.second)
-
-            # Plot the theta values of the STDP neurons.
-            fig, axs = plt.subplots(3, 1, sharex=True, figsize=(10, 7))
-            axs[0].plot(v.t / b2.second, v.v.T)
-            axs[1].plot(theta_statemon.t / b2.second, theta_statemon.theta.T)
-            # Plot the STDP spikes.
-            indices = stdp_spikemon.i
-            times = stdp_spikemon.t / b2.second
-            axs[2].plot(times, indices, '.k')
-            axs[2].set_ylim([45, 47])
-            plt.show()
 
             # Update the R-STDP synapse weights.
             rstdp_neuron_winner, output_spike_counts = snn_net.update_rstdp_synapses(
@@ -1129,31 +1083,39 @@ if __name__ == '__main__':
             else:
                 miss_ctr += 1
 
-            # Save the network weights.
-            if is_training and (sample + 1) % save_fq == 0:
-                record_weights(snn_net, epoch, sample_no=sample+1, epochs=EPOCHS, n_sample=n_sample, save_fq=save_fq)
             # Print the sample results for training.
-            print_sample_results(True, sample, n_sample, len(data_x[sample][0]), len(stdp_spikemon.t), len(rstdp_spikemon.t),
+            print_sample_results(True, sample, n_sample, len(data_x[sample][0]), 
+                                 len(stdp_spikemon.t), len(rstdp_spikemon.t),
                                  data_y[sample], rstdp_neuron_winner, output_spike_counts)
-            # Remove the spike monitors to prevent memory overflow.
-            snn_net.net.remove(stdp_spikemon, rstdp_spikemon)
-            del stdp_spikemon, rstdp_spikemon
-            # Remove all other monitors.
-            snn_net.net.remove(v, theta_statemon)
-            del v, theta_statemon
 
             # Prepare the network for the next sample.
             if is_training:
-                # Save the current network weights (trained on this sample).
-                w_stdp = np.copy(snn_net.input2stdp_synapses.w)
-                w_inh = np.copy(snn_net.i2e_synapses.w)
-                w_rstdp = np.copy(snn_net.rstdp_synapses.w)
+                # Store the current network weights (trained on this sample).
+                w_stdp_current = np.copy(snn_net.input2stdp_synapses.w)
+                w_inh_current = np.copy(snn_net.i2e_synapses.w)
+                w_rstdp_current = np.copy(snn_net.rstdp_synapses.w)
+                # Save the network weights at set intervals.
+                if (sample + 1) in save_idxs:
+                    record_weights(snn_net, epoch, sample+1, n_sample=n_sample, save_rate=save_rate)
+            else:
+                # Save the spike indices and times of the network.
+                stdp_spikes += [
+                    [np.copy(stdp_spikemon.i), 
+                     np.copy(stdp_spikemon.t / b2.second + ((epoch * n_sample + sample) * sample_length))]
+                ]
+                rstdp_spikes += [
+                    [np.copy(rstdp_spikemon.i), 
+                     np.copy(rstdp_spikemon.t / b2.second + ((epoch * n_sample + sample) * sample_length))]
+                ]
+            # Remove the spike monitors to prevent memory overflow.
+            snn_net.net.remove(stdp_spikemon, rstdp_spikemon)
+            del stdp_spikemon, rstdp_spikemon
             snn_net.net.restore()  # NOTE: This is necessary to reset neuron states and spike timings.
             if is_training:
                 # Restore the saved network weights.
-                snn_net.input2stdp_synapses.w = w_stdp
-                snn_net.i2e_synapses.w = w_inh
-                snn_net.rstdp_synapses.w = w_rstdp
+                snn_net.input2stdp_synapses.w = w_stdp_current
+                snn_net.i2e_synapses.w = w_inh_current
+                snn_net.rstdp_synapses.w = w_rstdp_current
 
         # Calculate the hit and miss factors for the next epoch.
         hit_factor = hit_ctr / n_sample
@@ -1175,8 +1137,12 @@ if __name__ == '__main__':
     else:
         # Save the spike indices and times of the STDP and R-STDP neurons.
         weight_parentfolder = 'weights'
-        stdp_spikes = np.array([stdp_spikemon_all.i, stdp_spikemon_all.t / b2.second])
-        rstdp_spikes = np.array([rstdp_spikemon_all.i, rstdp_spikemon_all.t / b2.second])
-        np.save(os.path.join(weight_parentfolder, weight_foldername, 'stdp_test_spikes.npy'), stdp_spikes)
-        np.save(os.path.join(weight_parentfolder, weight_foldername, 'rstdp_test_spikes.npy'), rstdp_spikes)
+        with open(os.path.join(weight_parentfolder, weight_foldername, 'stdp_test_spikes.pkl'), 'wb') as f:
+            pickle.dump(stdp_spikes, f)
+        with open(os.path.join(weight_parentfolder, weight_foldername, 'rstdp_test_spikes.pkl'), 'wb') as f:
+            pickle.dump(rstdp_spikes, f)
+        # Save the hit and miss rates.
         np.save(os.path.join(weight_parentfolder, weight_foldername, 'hit_miss_rate_test.npy'), hit_miss_rate)
+        # Append the model_params.txt file with the number of test samples.
+        with open(os.path.join(weight_parentfolder, weight_foldername, 'model_params.txt'), 'a') as f:
+            f.write(f"\nNumber of Test Samples: {n_sample}\n")

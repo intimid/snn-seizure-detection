@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import os
 import idx2numpy
 import json
+import pickle
 from load_data import get_tuh_raw
 
 
@@ -58,15 +59,27 @@ def get_data(mode, tuh_subfolder='threshold_encoded', remote_deploy=False):
 
 # Initialise folder and file names.
 folder = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\weights"
-subfolder = "02.11.2023_3"
+subfolder = "08.11.2023_1"
 foldername = os.path.join(folder, subfolder)
-filename_stdp_spikes = "stdp_test_spikes.npy"
-filename_rstdp_spikes = "rstdp_test_spikes.npy"
+filename_stdp_spikes = "stdp_test_spikes.pkl"
+filename_rstdp_spikes = "rstdp_test_spikes.pkl"
 filename_hit_miss_rate = "hit_miss_rate_test.npy"
 
+# Load the files.
+with open(os.path.join(foldername, filename_stdp_spikes), "rb") as f:
+    stdp_spikes = pickle.load(f)
+with open(os.path.join(foldername, filename_rstdp_spikes), "rb") as f:
+    rstdp_spikes = pickle.load(f)
+hit_miss_rate = np.load(os.path.join(foldername, filename_hit_miss_rate))
+
 # Model parameters.
+# Model parameters.
+with open(os.path.join(foldername, "model_params.txt"), "r") as f:
+    model_params = f.readlines()
+model_params = [param.strip() for param in model_params]
+sample_length = float(model_params[7].split(": ")[1])
+n_sample = int(model_params[9].split(": ")[1])
 sample_length = 0.35
-n_sample = 2115
 for filename in os.listdir(foldername):
     if filename.endswith(".json"):
         # Open the file and read the data.
@@ -75,8 +88,8 @@ for filename in os.listdir(foldername):
 n_stdp_neurons = int(model_config['network_params']['n_stdp'])
 n_rstdp_neurons = int(model_config['network_params']['n_output'])
 
-# Test data.
-data_type = 'mnist'  # 'raw' or 'stft'
+# Load the test data.
+data_type = 'thr_encoded'  # 'raw' or 'stft'
 data_subfolder = return_program_args(data_type)
 data_x, data_y = get_data(mode='test', tuh_subfolder=data_subfolder)
 if data_type == 'mnist':
@@ -86,34 +99,23 @@ if data_type == 'mnist':
 n_seiz = np.count_nonzero(data_y[:n_sample])
 n_non_seiz = n_sample - n_seiz
 
-# Load the files.
-stdp_spikes = np.load(os.path.join(foldername, filename_stdp_spikes))
-rstdp_spikes = np.load(os.path.join(foldername, filename_rstdp_spikes))
-hit_miss_rate = np.load(os.path.join(foldername, filename_hit_miss_rate))
-
-stdp_spike_idxs = stdp_spikes[0]
-stdp_spike_times = stdp_spikes[1]
-rstdp_spike_idxs = rstdp_spikes[0]
-rstdp_spike_times = rstdp_spikes[1]
-
 # Categorise spikes by neuron and sample.
-stdp_seiz_spikes_by_neuron = [0] * n_stdp_neurons
-stdp_nonseiz_spikes_by_neuron = [0] * n_stdp_neurons
-stdp_seiz_spikes_by_sample = [0] * n_seiz
-stdp_nonseiz_spikes_by_sample = [0] * n_non_seiz
+stdp_seiz_spikes_by_neuron = np.zeros(n_stdp_neurons)
+stdp_nonseiz_spikes_by_neuron = np.zeros(n_stdp_neurons)
+stdp_seiz_spikes_by_sample = np.zeros(n_sample)
+stdp_nonseiz_spikes_by_sample = np.zeros(n_sample)
 
 seiz_samples = np.where(data_y[:n_sample] == 1)[0]
 non_seiz_samples = np.where(data_y[:n_sample] == 0)[0]
 
-# Separate the spike times into 12-second sample windows.
-for i in range(len(stdp_spike_times)):
-    sample_no = int(stdp_spike_times[i] // sample_length)
-    if data_y[sample_no]:
-        stdp_seiz_spikes_by_neuron[int(stdp_spike_idxs[i])] += 1
-        stdp_seiz_spikes_by_sample[np.where(seiz_samples == sample_no)[0][0]] += 1
-    else:
-        stdp_nonseiz_spikes_by_neuron[int(stdp_spike_idxs[i])] += 1
-        stdp_nonseiz_spikes_by_sample[np.where(non_seiz_samples == sample_no)[0][0]] += 1
+for idx in seiz_samples:
+    for i in range(len(stdp_spikes[idx][0])):
+        stdp_seiz_spikes_by_neuron[int(stdp_spikes[idx][0][i])] += 1
+        stdp_seiz_spikes_by_sample[idx] += 1
+for idx in non_seiz_samples:
+    for i in range(len(stdp_spikes[idx][0])):
+        stdp_nonseiz_spikes_by_neuron[int(stdp_spikes[idx][0][i])] += 1
+        stdp_nonseiz_spikes_by_sample[idx] += 1
 
 # Print the number of seizure samples in the data.
 print(f"Number of seizure samples: {n_seiz} / {n_sample}")
@@ -123,17 +125,36 @@ print(f"Hit rate: {hit_miss_rate[0][0]}   |   Miss rate: {hit_miss_rate[0][1]}")
 # Plot the number of spikes per neuron in a stacked bar chart.
 fig = plt.figure()
 bottom = np.zeros(n_stdp_neurons)
-plt.bar(np.arange(n_stdp_neurons), stdp_nonseiz_spikes_by_neuron, label="Non-Seizure", bottom=bottom)
+plt.bar(np.arange(1, n_stdp_neurons+1), stdp_nonseiz_spikes_by_neuron, label="Non-Seizure", bottom=bottom)
 bottom += np.array(stdp_nonseiz_spikes_by_neuron)
-plt.bar(np.arange(n_stdp_neurons), stdp_seiz_spikes_by_neuron, label="Seizure", bottom=bottom)
+plt.bar(np.arange(1, n_stdp_neurons+1), stdp_seiz_spikes_by_neuron, label="Seizure", bottom=bottom)
+plt.xlim([0, n_stdp_neurons+1])
 plt.title("Number of spikes per neuron")
 plt.xlabel("Neuron index")
 plt.ylabel("Number of spikes")
 plt.legend()
 
+# Plot the percentage of non-seizure and seizure spikes per neuron.
+fig = plt.figure()
+percentage_per_neuron = np.zeros(n_stdp_neurons)
+for i in range(n_stdp_neurons):
+    percentage_per_neuron[i] = stdp_seiz_spikes_by_neuron[i] / (stdp_seiz_spikes_by_neuron[i] + stdp_nonseiz_spikes_by_neuron[i])
+plt.bar(np.arange(1, n_stdp_neurons+1), percentage_per_neuron)
+plt.xlim([0, n_stdp_neurons+1])
+plt.title("Percentage of seizure spikes per neuron")
+plt.xlabel("Neuron index")
+plt.ylabel("Percentage of seizure spikes")
+
 # Plot the number of spikes per sample.
+# TODO: THIS IS BROKEN. NEED TO CHANGE THIS STACKED BAR GRAPH TO R-STDP.
 fig, axs = plt.subplots(1, 2, sharey=True)
-axs[0].bar(np.arange(n_non_seiz), stdp_nonseiz_spikes_by_sample)
+bottom = np.zeros(len(non_seiz_samples))
+axs[0].bar(np.arange(len(non_seiz_samples)), stdp_nonseiz_spikes_by_sample[non_seiz_samples], 
+                     label="Non-Seizure", bottom=bottom)
+bottom += np.array(stdp_nonseiz_spikes_by_sample[non_seiz_samples])
+axs[0].bar(np.arange(len(non_seiz_samples)), stdp_seiz_spikes_by_sample[non_seiz_samples], 
+                     label="Seizure", bottom=bottom)
+plt.show()
 axs[0].set_title("Non-seizure")
 axs[0].set_xlabel("Sample index")
 axs[0].set_ylabel("Number of spikes")

@@ -14,7 +14,7 @@
         "refractory": 10,
         "v_rest": 0,
         "tau": 20,
-        "theta_mult": 0.0,
+        "theta_mult": 1.5,
         "tau_theta": 999
     },
 

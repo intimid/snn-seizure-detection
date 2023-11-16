@@ -10,7 +10,7 @@
         "tau_theta should be equal to tau"
     ],
     "neuron_stdp_params": {
-        "threshold": 5.0,
+        "threshold": 8.0,
         "refractory": 999,
         "v_rest": -0.065,
         "tau": 100,
@@ -42,8 +42,8 @@
     "synapse_stdp_params": {
         "threshold": 999,
         "w_max": 1.0,
-        "taupre": 20,
-        "taupost": 20,
+        "taupre": 100,
+        "taupost": 100,
         "Apre": 0.05,
         "Apost": 999,
         "ltd_factor_max": 999,

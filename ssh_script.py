@@ -160,16 +160,16 @@ def ssh_run_script(host, username, password, local_src, script_name, live_output
 
 if __name__ == "__main__":
     # SSH login info.
-    host = "10.167.60.43"
-    username = "tim"
-    password = "Spider"
+    host = ""
+    username = ""
+    password = ""
 
     # Upload directories.
     local_src = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection"
     remote_dest = "/home/tim/SNN Seizure Detection"
 
     # Python script to be run remotely.
-    script_name = "slice_tuh_data.py"
+    script_name = "encode_tuh_data.py"
 
     # Update the project files on the remote server.
     sftp_upload_project(host, username, password, local_src, remote_dest)

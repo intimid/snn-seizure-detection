@@ -3,12 +3,9 @@ import matplotlib.pyplot as plt
 
 import os
 
-# Model parameters.
-save_fq = 50
-
 # Initialise folder and file names.
 folder = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\weights"
-subfolder = "02.11.2023_3"
+subfolder = "08.11.2023_2"
 foldername = os.path.join(folder, subfolder)
 
 filename_w_stdp = "w_stdp.npy"
@@ -18,6 +15,19 @@ filename_w_stdp_final = "w_stdp_final.npy"
 filename_w_inh_final = "w_inh_final.npy"
 filename_w_rstdp_final = "w_rstdp_final.npy"
 filename_hit_miss_rate = "hit_miss_rate_train.npy"
+
+# Model parameters.
+with open(os.path.join(foldername, "model_params.txt"), "r") as f:
+    model_params = f.readlines()
+model_params = [param.strip() for param in model_params]
+epochs = int(model_params[0].split(": ")[1])
+lr_init = float(model_params[1].split(": ")[1])
+lr_final = float(model_params[2].split(": ")[1])
+lr_decay = float(model_params[3].split(": ")[1])
+save_rate = int(model_params[4].split(": ")[1])
+data_type = model_params[5].split(": ")[1]
+n_sample = int(model_params[6].split(": ")[1])
+sample_length = float(model_params[7].split(": ")[1])
 
 # Load the weights.
 w_stdp = np.load(os.path.join(foldername, filename_w_stdp))
@@ -56,20 +66,46 @@ axs[2].set_xlabel("Neuron index")
 axs[2].legend(["Initial", "Final"])
 plt.tight_layout()
 
-# Plot the change in weights over time.
+# Plot the positive and negative change in weights over time.
 fig, axs = plt.subplots(3, 1)
-sample_numbers = np.arange(len(w_stdp)) * save_fq
-w_stdp_changes = [sum(abs(w_stdp[i+1] - w_stdp[i])) for i in range(len(w_stdp) - 1)]
-axs[0].plot(sample_numbers[1:], w_stdp_changes)
+save_fq = n_sample / (save_rate + 1)
+save_idxs = np.ceil([i * save_fq for i in range(save_rate + 2)]).astype(int).tolist()
+sample_numbers = save_idxs * epochs
+epoch_numbers = [i for i in range(epochs) for _ in range((save_rate + 2))]
+sample_numbers = [sample_numbers[i] + (n_sample * epoch_no) for i, epoch_no in zip(range(len(sample_numbers)), epoch_numbers)]
+
+# Plot the change in weights over time. Ignore the weights at the end of each 
+# except the last. This is to avoid double-up of weights.
+sample_numbers = [item for idx, item in enumerate(sample_numbers) if idx % 6 != 0]
+w_stdp_changes = [item for idx, item in enumerate(w_stdp) if idx % 6 != 0]
+w_stdp_changes = [(w_stdp_changes[i+1] - w_stdp_changes[i]) for i in range(len(w_stdp_changes) - 1)]
+w_stdp_changes_pos = [np.sum(w_stdp_changes[i][w_stdp_changes[i] > 0]) for i in range(len(w_stdp_changes))]
+w_stdp_changes_neg = [np.sum(w_stdp_changes[i][w_stdp_changes[i] < 0]) for i in range(len(w_stdp_changes))]
+axs[0].plot(sample_numbers[1:], w_stdp_changes_pos)
+axs[0].plot(sample_numbers[1:], w_stdp_changes_neg)
+axs[0].legend(["Positive", "Negative"])
+axs[0].plot([sample_numbers[1], sample_numbers[-1]], [0, 0], '--k')
 axs[0].set_title("STDP weights")
 axs[0].set_ylabel("Total weight change")
-w_inh_changes = [sum(abs(w_inh[i+1] - w_inh[i])) for i in range(len(w_inh) - 1)]
-axs[1].plot(sample_numbers[1:], w_inh_changes)
+w_inh_changes = [item for idx, item in enumerate(w_inh) if idx % 6 != 0]
+w_inh_changes = [sum(abs(w_inh_changes[i+1] - w_inh_changes[i])) for i in range(len(w_inh_changes) - 1)]
+w_inh_changes_pos = [np.sum(w_inh_changes[i][w_inh_changes[i] > 0]) for i in range(len(w_inh_changes))]
+w_inh_changes_neg = [np.sum(w_inh_changes[i][w_inh_changes[i] < 0]) for i in range(len(w_inh_changes))]
+axs[1].plot(sample_numbers[1:], w_inh_changes_pos)
+axs[1].plot(sample_numbers[1:], w_inh_changes_neg)
+axs[1].legend(["Positive", "Negative"])
+axs[1].plot([sample_numbers[1], sample_numbers[-1]], [0, 0], '--k')
 axs[1].set_title("Inhibitory weights")
 axs[1].set_ylabel("Total weight change")
-r_stdp_changes = [sum(abs(w_rstdp[i+1] - w_rstdp[i])) for i in range(len(w_rstdp) - 1)]
-axs[2].plot(sample_numbers[1:], r_stdp_changes)
+w_rstdp_changes = [item for idx, item in enumerate(w_rstdp) if idx % 6 != 0]
+w_rstdp_changes = [sum(abs(w_rstdp_changes[i+1] - w_rstdp_changes[i])) for i in range(len(w_rstdp_changes) - 1)]
+w_rstdp_changes_pos = [np.sum(w_rstdp_changes[i][w_rstdp_changes[i] > 0]) for i in range(len(w_rstdp_changes))]
+w_rstdp_changes_neg = [np.sum(w_rstdp_changes[i][w_rstdp_changes[i] < 0]) for i in range(len(w_rstdp_changes))]
+axs[2].plot(sample_numbers[1:], w_rstdp_changes_pos)
+axs[2].plot(sample_numbers[1:], w_rstdp_changes_neg)
 axs[2].set_title("R-STDP weights")
+axs[2].legend(["Positive", "Negative"])
+axs[2].plot([sample_numbers[1], sample_numbers[-1]], [0, 0], '--k')
 axs[2].set_ylabel("Total weight change")
 axs[2].set_xlabel("Sample number")
 plt.tight_layout()

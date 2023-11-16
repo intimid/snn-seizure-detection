@@ -26,6 +26,7 @@ def get_local_tuh_dev(file_count=None, sz_ratio=None, mmap_mode=None):
 
     return data, labels
 
+
 def get_random_files_local_tuh_dev(foldername, file_count=None, mmap_mode=None):
     sz_regex = re.compile(r'_seiz_')
 
@@ -51,6 +52,7 @@ def get_random_files_local_tuh_dev(foldername, file_count=None, mmap_mode=None):
             labels[i] = 0
 
     return data, labels
+
 
 def force_seizure_ratio(data, labels, sz_ratio):
     # Calculate how many seizure samples need to be added/removed.
@@ -89,13 +91,16 @@ def force_seizure_ratio(data, labels, sz_ratio):
 
     return data, labels
 
+
 def transpose_data(data):
     data = np.transpose(data, (0, 3, 1, 2))
     return data
 
+
 def unsqueeze_data(data):
     data = np.expand_dims(data, axis=2)
     return data
+
 
 def split_train_test(data, label, ratio):
     train_x = data[:int(len(data) * ratio)]
@@ -104,6 +109,7 @@ def split_train_test(data, label, ratio):
     test_y = label[int(len(label) * ratio):]
     return train_x, train_y, test_x, test_y
 
+
 def prelim_analyse_data(data):
     # Calculate the min, max, standard deviation, and mean of the data.
     print(f"Min: {torch.min(data)}")
@@ -111,20 +117,29 @@ def prelim_analyse_data(data):
     print(f"Standard deviation: {torch.std(data)}")
     print(f"Mean: {torch.mean(data)}")
 
-def preprocess_tuh_raw(data):
-    # Remove 60 Hz mains noise.
-    b, a = signal.iirnotch(w0=60, Q=30, fs=250)
-    filtered_signal = signal.filtfilt(b, a, data)
 
+def preprocess_tuh_raw(data, clip=[]):
+    # Remove 60 Hz mains noise.
+    b1, a1 = signal.iirnotch(w0=60, Q=30, fs=250)
     # Remove frequencies below 0.5 Hz to reduce low-frequency drift and noise.
     normal_cutoff = 0.5 / (250 / 2)
-    b, a = signal.butter(N=4, Wn=normal_cutoff, btype='highpass')
-    filtered_signal = signal.filtfilt(b, a, filtered_signal)
+    b2, a2 = signal.butter(N=4, Wn=normal_cutoff, btype='highpass')
 
-    # Clip voltages to between -800 to 800 mV.
-    filtered_signal = np.clip(filtered_signal, -800, 800)
+    n_samples = len(data)
+    filtered_data = []
+    for i in range(n_samples):
+        if i % 100 == 0:
+            print(f"Preprocessing data {i} of {n_samples}...")
+        filtered_signal = signal.filtfilt(b1, a1, data[i])
+        filtered_signal = signal.filtfilt(b2, a2, filtered_signal)
 
-    return filtered_signal
+        if clip:
+            filtered_signal = np.clip(filtered_signal, clip[0], clip[1])
+
+        filtered_data.append(filtered_signal)
+
+    return np.array(filtered_data)
+
 
 def get_tuh_raw(test=False, sz_ratio=None, mmap_mode=None):
     foldername = "D:\\Uni\\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_raw"
@@ -177,28 +192,7 @@ def get_tuh_data(get_remote=True, tuh_subfolder='reshuffle', mode='train', mmap_
 
 
 
-
 if __name__ == '__main__':
-    # data, labels = get_local_tuh_dev(file_count=2000)
-    # # Calculate seizure ratio.
-    # sz_ratio = np.count_nonzero(labels) / len(labels)
-    # print(f"Seizure ratio: {sz_ratio}")
-
-    # # Get the min, max, std, and mean of the data when fq=3,4,5,6,7,8.
-    # non_sz_data = data[:,:,:,:,3:9][labels == 0]
-    # sz_data = data[:,:,:,:,3:9][labels == 1]
-    # # Average the data across the channels
-    # non_sz_data = torch.mean(non_sz_data, dim=3)
-    # sz_data = torch.mean(sz_data, dim=3)
-    # # Average the data across the frequencies.
-    # non_sz_data = torch.mean(non_sz_data, dim=3).squeeze()
-    # sz_data = torch.mean(sz_data, dim=3).squeeze()
-
-    # print("\n===== NON-SEIZURE DATA =====")
-    # prelim_analyse_data(non_sz_data)
-    # print("\n===== SEIZURE DATA =====")
-    # prelim_analyse_data(sz_data)
-
     foldername = "D:\\Uni\Yessir, its a Thesis\\SNN Seizure Detection\\data\\tuh_raw"
     filename_x = "trainx.npy"
     filename_y = "trainy.npy"
@@ -210,15 +204,3 @@ if __name__ == '__main__':
     # Get the number of seizure samples.
     sz_count = np.count_nonzero(labels[:1000])
     print(f"Seizure count: {sz_count}")
-
-    # idx = np.where(labels == 1)[0][0]
-    # print(idx)
-
-    # fig, axs = plt.subplots(nrows=1, ncols=2, sharey=True)
-    # x = data[10]
-    # for channel in range(19):
-    #     axs[0].plot(x[:,channel])
-    # x = data[idx]
-    # for channel in range(19):
-    #     axs[1].plot(x[:,channel])
-    # plt.show()
